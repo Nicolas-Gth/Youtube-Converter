@@ -22,6 +22,7 @@ root.title("YouTube Converter [v1.5] - Made by neoproxy")
 root.geometry("466x250")
 root.configure(bg='#454746')
 root.resizable(False,False)
+is_verbose = True
     
 os.environ["PATH"] += os.pathsep + ".\\ffmpeg\\bin"
 ffmpeg_path = ".\\ffmpeg\\bin"
@@ -55,37 +56,55 @@ def browse_button():
 class MyCustomPP(yt_dlp.postprocessor.PostProcessor):
     def run(self, video_infos):
 
-        u = urllib.request.urlopen(video_infos['thumbnail'])
-        raw_data = u.read()
-        u.close()
-        im = Image.open(BytesIO(raw_data))
-
         file_format = getFileFormat(radio_button_format.get())
-
         file_path = f"{Entry2.get()}/{video_infos['title']}.{file_format}"
 
-        artist = video_infos['uploader'].replace(" - Topic", "")
-        New_file_path = f"{Entry2.get()}/{re.sub(r'[!?:#%&{}<>|*/$@]', '', artist)} - {re.sub(r'[!?:#%&{}<>|*/$@]', '', video_infos['title'])}.{file_format}"
-        os.rename(file_path, New_file_path)
-        file_path = New_file_path
-        metadatas = MP3(file_path, ID3=EasyID3)
-        metadatas['artist'] = artist
-        metadatas.save()
+        # Add metadatas to the file
+        try:
+            artist_name = video_infos['artists'][0]
+        except KeyError:
+            artist_name = video_infos['uploader'].replace(" - Topic", "")
         
-        width, height = im.size
-        left = int((width - height)/2)
-        top = 0
-        right = width - int((width - height)/2)
-        bottom = height
-        album_im = im.crop((left, top, right, bottom))
+        if file_format == "mp3":
+            metadatas = MP3(file_path, ID3=EasyID3)
+            metadatas['artist'] = artist_name
+            try:
+                album_name = video_infos['album']
+                metadatas['album'] = album_name
+            except KeyError:
+                pass
 
-        audio = ID3(file_path)
-        with io.BytesIO() as output:
-            album_im.save(output, format="JPEG")
-            data = output.getvalue()
-        with io.BytesIO(data) as albumart:
-            audio['APIC'] = APIC(encoding=0, mime='image/jpeg', type=3, desc=u'Cover', data=albumart.read())
-        audio.save()
+            metadatas.save()
+
+        
+        # Rename and sanitize the file name
+        new_file_path = f"{Entry2.get()}/{re.sub(r'[!?:#%&{}<>|*/$@]', '', artist_name)} - {re.sub(r'[!?:#%&{}<>|*/$@]', '', video_infos['title'])}.{file_format}"
+        os.rename(file_path, new_file_path)
+        file_path = new_file_path
+        
+        if file_format == "mp3":
+            # Downloads thumbnail image and sets it as the album cover
+            u = urllib.request.urlopen(video_infos['thumbnail'])
+            raw_data = u.read()
+            u.close()
+            im = Image.open(BytesIO(raw_data))
+
+            width, height = im.size
+            left = int((width - height)/2)
+            top = 0
+            right = width - int((width - height)/2)
+            bottom = height
+            album_im = im.crop((left, top, right, bottom))
+            
+            audio = ID3(file_path)
+            with io.BytesIO() as output:
+                album_im.save(output, format="JPEG")
+                data = output.getvalue()
+            with io.BytesIO(data) as albumart:
+                audio['APIC'] = APIC(encoding=0, mime='image/jpeg', type=3, desc=u'Cover', data=albumart.read())
+            audio.save()
+
+
         return [], video_infos
 
 
@@ -99,36 +118,38 @@ def convert():
     if noplaylist == True:
         playlist_start = 1
         playlist_end = 1
-        Button2.configure(text="        Fetching video infos         ")
+        Button2.configure(text="        Fetching video infos…        ")
     else:
         playlist_start = int(Entry3.get())
         playlist_end = int(Entry4.get())
         global playlist_length
         playlist_length = playlist_end - playlist_start
-        Button2.configure(text="       Fetching playlist infos       ")
+        Button2.configure(text="       Fetching playlist infos…      ")
 
     if file_format == "mp3":
         concatenated_bitrate = clicked.get()
         bitrate = concatenated_bitrate.split("Kbps")[0]
         format = 'bestaudio/best'
-        ydl_opts = {'no-part': True,'ignoreerrors': True, 'quiet': True, 'extractor_args':{'youtubetab': {'skip':['authcheck']}}, "external_downloader_args": ['-loglevel', 'panic'],'format': format,'outtmpl': directory,'ffmpeg_location': ffmpeg_path, 'noplaylist': noplaylist,'progress_hooks': [my_hook], 'playliststart': playlist_start, 'playlistend': playlist_end,'postprocessors':[{'key':'FFmpegExtractAudio','preferredcodec': 'mp3','preferredquality': bitrate},{'key': 'FFmpegMetadata'}]}
+        ydl_opts = {'verbose': is_verbose, 'no-part': True,'ignoreerrors': True, 'quiet': True, 'extractor_args':{'youtubetab': {'skip':['authcheck']}}, "external_downloader_args": ['-loglevel', 'panic'],'format': format,'outtmpl': directory,'ffmpeg_location': ffmpeg_path, 'noplaylist': noplaylist,'progress_hooks': [my_hook], 'playliststart': playlist_start, 'playlistend': playlist_end,'postprocessors':[{'key':'FFmpegExtractAudio','preferredcodec': 'mp3','preferredquality': bitrate},{'key': 'FFmpegMetadata', 'add_metadata': True}]}
 
     elif file_format == "mp4":
         concatenated_quality = clicked2.get()
         quality = concatenated_quality.split("p")[0]
         format = 'bestvideo[height<='+ quality +'][vbr<=12000][ext=mp4]+bestaudio[ext=m4a]/best[vbr<=12000][ext=mp4]/best'
-        ydl_opts = {'no-part': True,'ignoreerrors': True,'quiet': True,'extractor_args':{'youtubetab': {'skip':['authcheck']}}, "external_downloader_args": ['-loglevel', 'panic'],'format': format,'outtmpl': directory,'ffmpeg_location': ffmpeg_path, 'noplaylist': noplaylist,'progress_hooks': [my_hook], 'playliststart': playlist_start, 'playlistend': playlist_end,'postprocessors':[{'key':'FFmpegVideoConvertor','preferedformat': 'mp4'}]}
+        ydl_opts = {'verbose': is_verbose,'no-part': True,'ignoreerrors': True,'quiet': True,'extractor_args':{'youtubetab': {'skip':['authcheck']}}, "external_downloader_args": ['-loglevel', 'panic'],'format': format,'outtmpl': directory,'ffmpeg_location': ffmpeg_path, 'noplaylist': noplaylist,'progress_hooks': [my_hook], 'playliststart': playlist_start, 'playlistend': playlist_end,'postprocessors':[{'key':'FFmpegVideoConvertor','preferedformat': 'mp4'}]}
 
     global video_infos
     try:
         #'writepages': True, 'verbose': True, 'cookiefile' : 'cookies.txt'
-        video_infos = yt_dlp.YoutubeDL({'quiet': True,'ignoreerrors': True, 'extractor_args':{'youtubetab': {'skip':['authcheck']}},"external_downloader_args": ['-loglevel', 'panic'], 'simulate': True, 'cachedir': False,'noplaylist': noplaylist, 'playliststart': playlist_start, 'playlistend': playlist_end}).extract_info(url, download=False)
+        video_infos = yt_dlp.YoutubeDL({'verbose': is_verbose, 'quiet': True,'ignoreerrors': True, 'extractor_args':{'youtubetab': {'skip':['authcheck']}},"external_downloader_args": ['-loglevel', 'panic'], 'simulate': True, 'cachedir': False,'noplaylist': noplaylist, 'playliststart': playlist_start, 'playlistend': playlist_end}).extract_info(url, download=False)
+
     except yt_dlp.utils.DownloadError as error:
         FetchingErrorStatus = True
+
         while FetchingErrorStatus == True:
             print("There was a problem during the fetching, automatically restarting!")
             try:
-                video_infos = yt_dlp.YoutubeDL({'quiet': True,'ignoreerrors': True,'extractor_args':{'youtubetab': {'skip':['authcheck']}}, "external_downloader_args": ['-loglevel', 'panic'], 'simulate': True, 'cachedir': False,'noplaylist': noplaylist, 'playliststart': playlist_start, 'playlistend': playlist_end}).extract_info(url, download=False)
+                video_infos = yt_dlp.YoutubeDL({'verbose': is_verbose, 'quiet': True,'ignoreerrors': True,'extractor_args':{'youtubetab': {'skip':['authcheck']}}, "external_downloader_args": ['-loglevel', 'panic'], 'simulate': True, 'cachedir': False,'noplaylist': noplaylist, 'playliststart': playlist_start, 'playlistend': playlist_end}).extract_info(url, download=False)
                 FetchingErrorStatus = False
             except yt_dlp.utils.DownloadError as error:
                 FetchingErrorStatus = True
@@ -174,7 +195,6 @@ def convert():
     im = Image.open(BytesIO(raw_data))
     thumbnail_margin = 74
     if noplaylist == False:
-        # if " - Topic" in video_infos['entries'][store()]['uploader']:
         if 'Music' in video_infos['entries'][store()]['categories']:
             width, height = im.size
             left = int((width - height)/2)
@@ -188,7 +208,6 @@ def convert():
             thumbnail_margin += 40
 
     elif noplaylist == True:
-        # if " - Topic" in video_infos['uploader']:
         if 'Music' in video_infos['categories']:
             width, height = im.size
             left = int((width - height)/2)
@@ -225,6 +244,7 @@ def convert():
             ydl.download([url])
         
     except yt_dlp.utils.DownloadError as error:
+        print(error)
         DownloadErrorStatus = True
         while DownloadErrorStatus == True:
             print("There was a problem during the download, automatically restarting!")
@@ -233,17 +253,18 @@ def convert():
                 concatenated_bitrate = clicked.get()
                 bitrate = concatenated_bitrate.split("Kbps")[0]
                 format = 'bestaudio/best'
-                ydl_opts = {'no-part': True,'quiet': True,"external_downloader_args": ['-loglevel', 'panic'], 'format': format,'outtmpl': directory,'ffmpeg_location': ffmpeg_path, 'noplaylist': noplaylist,'progress_hooks': [my_hook], 'cookiefile' : 'cookies.txt', 'playliststart': (playlist_start + store()), 'playlistend': playlist_end,'postprocessors':[{'key':'FFmpegExtractAudio','preferredcodec': 'mp3','preferredquality': bitrate},{'key': 'FFmpegMetadata'}]}
+                ydl_opts = {'verbose': is_verbose,'no-part': True,'quiet': True,"external_downloader_args": ['-loglevel', 'panic'], 'format': format,'outtmpl': directory,'ffmpeg_location': ffmpeg_path, 'noplaylist': noplaylist,'progress_hooks': [my_hook], 'cookiefile' : 'cookies.txt', 'playliststart': (playlist_start + store()), 'playlistend': playlist_end,'postprocessors':[{'key':'FFmpegExtractAudio','preferredcodec': 'mp3','preferredquality': bitrate},{'key': 'FFmpegMetadata', 'add_metadata': True}]}
 
             elif file_format == "mp4":
                 concatenated_quality = clicked2.get()
                 quality = concatenated_quality.split("p")[0]
                 format = 'bestvideo[height<='+ quality +'][vbr<=12000][ext=mp4]+bestaudio[ext=m4a]/best[vbr<=12000][ext=mp4]/best'
-                ydl_opts = {'no-part': True,'quiet': True,"external_downloader_args": ['-loglevel', 'panic'], 'format': format,'outtmpl': directory,'ffmpeg_location': ffmpeg_path, 'noplaylist': noplaylist,'progress_hooks': [my_hook], 'cookiefile' : 'cookies.txt', 'playliststart': (playlist_start + store()), 'playlistend': playlist_end,'postprocessors':[{'key':'FFmpegVideoConvertor','preferedformat': 'mp4'}]}
+                ydl_opts = {'verbose': is_verbose,'no-part': True,'quiet': True,"external_downloader_args": ['-loglevel', 'panic'], 'format': format,'outtmpl': directory,'ffmpeg_location': ffmpeg_path, 'noplaylist': noplaylist,'progress_hooks': [my_hook], 'cookiefile' : 'cookies.txt', 'playliststart': (playlist_start + store()), 'playlistend': playlist_end,'postprocessors':[{'key':'FFmpegVideoConvertor','preferedformat': 'mp4'}]}
             try:
                 yt_dlp.YoutubeDL(ydl_opts).download([url])
                 DownloadErrorStatus = False
             except yt_dlp.utils.DownloadError as error:
+                print(error)
                 DownloadErrorStatus = True
 
     for widgets in frameProgress.winfo_children():
@@ -264,6 +285,7 @@ def start_convert():
     threading.Thread(target=convert).start()
 
 def my_hook(d):
+    video_index = d['info_dict']['playlist_autonumber'] -  1
     if d['status'] == 'downloading':
         My_progress['mode'] = 'determinate'
         progress_str = d['_percent_str'].replace("\x1b[0;94m ","").replace("\x1b[0m", "")
@@ -277,13 +299,13 @@ def my_hook(d):
                 info_str = f"Title : \"{video_infos['title']}\"\nChannel : \"{video_infos['uploader']}\"\nDuration : {str(datetime.timedelta(seconds=int(video_infos['duration'])))}"
 
             if noplaylist == False:
-                songname_str = f"Downloading video {store()+1} of {playlist_length+1} from the playlist \"{video_infos['title']}\""
-                info_str = f"Title : \"{video_infos['entries'][store()]['title']}\"\nChannel : \"{video_infos['entries'][store()]['uploader']}\"\nDuration : {str(datetime.timedelta(seconds=int(video_infos['entries'][store()]['duration'])))}"
-                u = urllib.request.urlopen(video_infos['entries'][store()]['thumbnail'])
+                songname_str = f"Downloading video {video_index+1} of {playlist_length+1} from the playlist \"{video_infos['title']}\""
+                info_str = f"Title : \"{video_infos['entries'][video_index]['title']}\"\nChannel : \"{video_infos['entries'][video_index]['uploader']}\"\nDuration : {str(datetime.timedelta(seconds=int(video_infos['entries'][video_index]['duration'])))}"
+                u = urllib.request.urlopen(video_infos['entries'][video_index]['thumbnail'])
                 raw_data = u.read()
                 u.close()
                 im = Image.open(BytesIO(raw_data))
-                if " - Topic" in video_infos['entries'][store()]['uploader']:
+                if " - Topic" in video_infos['entries'][video_index]['uploader']:
                     width, height = im.size
                     left = int((width - height)/2)
                     top = 0
@@ -309,7 +331,7 @@ def my_hook(d):
         progress_str = "Processing"
         songname_str = f"Finished downloading \"{video_infos['title']}\""
         if noplaylist == False:
-            TotalProgressPercentage = ((store()+1)/(playlist_length+1))*100
+            TotalProgressPercentage = ((video_index+1)/(playlist_length+1))*100
             Total_progress["value"] = int(TotalProgressPercentage)
     
             if int(TotalProgressPercentage) == 100:
@@ -319,7 +341,7 @@ def my_hook(d):
             LabelTotalProgress.configure(text=LabelPercentage)
             LabelTotalProgress.text=LabelPercentage
 
-        CurrentSong = store() + 1
+        CurrentSong = video_index + 1
         store(CurrentSong)
 
     LabelProgress.configure(text=progress_str)
@@ -338,8 +360,8 @@ def replaceMp3():
     clicked2 = StringVar()
     clicked2.set("720p")
 
-    quality = ["144p", "360p", "480p", "720p", "1080p", "1440p"]
-    w2 = ttk.OptionMenu(frame1, clicked2, quality[3], *quality)
+    quality = ["144p", "360p", "480p", "720p", "1080p", "1440p", "2160p"]
+    w2 = ttk.OptionMenu(frame1, clicked2, quality[4], *quality)
     w2.grid(row=0, column=4)
 
 def replaceMp4():
