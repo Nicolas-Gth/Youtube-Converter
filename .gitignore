@@ -1,0 +1,7 @@
+ffmpeg-N-103380-ge41bd075dd-win64-gpl
+dist
+build
+__pycache__
+main.spec
+desktop.ini
+cookies.txt
